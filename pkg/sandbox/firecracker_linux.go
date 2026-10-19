@@ -25,11 +25,12 @@ import (
 
 // FirecrackerHypervisor manages microVMs on Linux using AWS Firecracker.
 type FirecrackerHypervisor struct {
-	logger     *logrus.Logger
-	warmPool   chan *FirecrackerInstance
-	baseRootfs string
-	kernelPath string
-	slotSeq    uint64
+	logger      *logrus.Logger
+	warmPool    chan *FirecrackerInstance
+	warmEnabled bool
+	baseRootfs  string
+	kernelPath  string
+	slotSeq     uint64
 }
 
 // NewHypervisor creates the platform-specific hypervisor (Firecracker on Linux).
@@ -64,6 +65,12 @@ func (h *FirecrackerHypervisor) Prewarm(kernelPath, baseRootfs string, netPool n
 	}
 	h.kernelPath = kernelPath
 	h.baseRootfs = baseRootfs
+	if count <= 0 {
+		h.warmEnabled = false
+		h.logger.Infof("Warm microVM pool disabled (--warm-pool-size=0); running in cold-boot mode")
+		return
+	}
+	h.warmEnabled = true
 
 	h.logger.Infof("Pre-warming %d Firecracker microVMs for sub-80ms SLA...", count)
 	var wg sync.WaitGroup
@@ -140,30 +147,32 @@ type FirecrackerInstance struct {
 }
 
 func (h *FirecrackerHypervisor) Start(ctx context.Context, opts SandboxOpts) (Instance, error) {
-	// Fast path: acquire a pre-warmed Firecracker microVM from the pool
-	select {
-	case inst := <-h.warmPool:
-		inst.id = opts.SandboxID
-		inst.opts.Language = opts.Language
-		inst.opts.Timeout = opts.Timeout
-		inst.broken = false
-		return inst, nil
-	default:
-	}
+	if h.warmEnabled {
+		// Fast path: acquire a pre-warmed Firecracker microVM from the pool
+		select {
+		case inst := <-h.warmPool:
+			inst.id = opts.SandboxID
+			inst.opts.Language = opts.Language
+			inst.opts.Timeout = opts.Timeout
+			inst.broken = false
+			return inst, nil
+		default:
+		}
 
-	// If warm pool is temporarily busy, wait briefly for a warm VM before falling back to cold boot
-	timer := time.NewTimer(250 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case inst := <-h.warmPool:
-		inst.id = opts.SandboxID
-		inst.opts.Language = opts.Language
-		inst.opts.Timeout = opts.Timeout
-		inst.broken = false
-		return inst, nil
-	case <-timer.C:
-	case <-ctx.Done():
-		return nil, ctx.Err()
+		// If warm pool is temporarily busy, wait briefly for a warm VM before falling back to cold boot
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case inst := <-h.warmPool:
+			inst.id = opts.SandboxID
+			inst.opts.Language = opts.Language
+			inst.opts.Timeout = opts.Timeout
+			inst.broken = false
+			return inst, nil
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 
 	// Cold boot fallback: materialize overlay if not yet present

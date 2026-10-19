@@ -36,10 +36,11 @@ type activeEntry struct {
 
 // Config holds SandboxManager setup arguments.
 type Config struct {
-	KernelPath string
-	RootfsPath string
-	OverlayDir string
-	PoolSize   int
+	KernelPath   string
+	RootfsPath   string
+	OverlayDir   string
+	PoolSize     int
+	WarmPoolSize int
 }
 
 // NewManager initializes a new SandboxManager.
@@ -59,8 +60,8 @@ func NewManager(cfg Config, logger *logrus.Logger) (*SandboxManager, error) {
 	if prewarmer, ok := hyp.(interface {
 		Prewarm(kernelPath, baseRootfs string, netPool network.NetworkPool, count int)
 	}); ok {
-		warmCount := 10
-		if cfg.PoolSize > 0 && cfg.PoolSize < warmCount*2 {
+		warmCount := cfg.WarmPoolSize
+		if cfg.PoolSize > 0 && warmCount > cfg.PoolSize/2 {
 			warmCount = cfg.PoolSize / 2
 		}
 		prewarmer.Prewarm(cfg.KernelPath, cfg.RootfsPath, pool, warmCount)

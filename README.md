@@ -38,6 +38,27 @@ Airbox Pre-Warmed & Snapshot Flow (~11.9ms Median RTT):
 
 ![Airbox Firecracker Lifecycle Gantt Chart](docs/assets/benchmark_gantt.png)
 
+### Head-to-Head Comparison vs. Docker (`runc`), gVisor (`runsc`), and Cold Firecracker
+
+Measured on the same `n2-standard-2` Linux KVM host executing `python3 -c "print(2 + 2)"` across 25 sequential runs (`./scripts/compare-runtimes.sh --runs 25`):
+
+| Runtime / Architecture | Isolation Boundary | Min (ms) | P50 (ms) | P95 (ms) | P99 (ms) | Relative Latency |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **FastVM (Airbox Warm Pool)** | **Hardware KVM (`Firecracker`)** | **`7.45 ms`** | **`8.00 ms`** | **`8.44 ms`** | **`8.54 ms`** | **1.0x (Baseline)** |
+| **Docker (`runc` container)** | Shared Host Kernel (`cgroups`/`ns`) | `235.55 ms` | `243.51 ms` | `248.50 ms` | `262.71 ms` | `30.4x slower` |
+| **gVisor (`runsc` sandbox)** | User-Space Kernel (`Sentry`) | `289.65 ms` | `299.98 ms` | `311.25 ms` | `313.48 ms` | `37.5x slower` |
+| **Standard Firecracker (Cold Boot)** | Hardware KVM (`Firecracker`) | `609.61 ms` | `622.17 ms` | `637.04 ms` | `646.53 ms` | `77.8x slower` |
+
+To reproduce this comparison yourself:
+```bash
+# Option A: Run directly on any Linux KVM machine
+./scripts/compare-runtimes.sh --runs 25
+
+# Option B: Auto-provision an ephemeral Spot KVM node using your own gcloud account (auto-deleted on exit)
+gcloud auth login && gcloud config set project YOUR_GCP_PROJECT_ID
+./scripts/compare-runtimes.sh --provision-gcp --runs 25
+```
+
 ---
 
 ## 🛠️ Core Engineering Highlights
@@ -94,6 +115,7 @@ FastVM/
 └── scripts/
     ├── setup-host.sh             # One-click Linux KVM & Firecracker v1.7.0 host installer
     ├── download-assets.sh        # Pre-built Linux 5.10.209 kernel & Ubuntu 22.04 rootfs fetcher
+    ├── compare-runtimes.sh       # Head-to-head benchmark vs Docker, gVisor, and Cold Firecracker
     └── benchmark.go              # Concurrent SLA benchmark & HTML Gantt chart generator
 ```
 

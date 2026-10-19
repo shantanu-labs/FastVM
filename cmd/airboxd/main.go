@@ -16,12 +16,13 @@ import (
 
 func main() {
 	var (
-		port        string
-		kernelPath  string
-		rootfsPath  string
-		overlayDir  string
-		tapPoolSize int
-		logLevel    string
+		port         string
+		kernelPath   string
+		rootfsPath   string
+		overlayDir   string
+		tapPoolSize  int
+		warmPoolSize int
+		logLevel     string
 	)
 
 	flag.StringVar(&port, "port", "8080", "Port for the Airbox API daemon to listen on")
@@ -29,6 +30,7 @@ func main() {
 	flag.StringVar(&rootfsPath, "rootfs", "assets/rootfs.ext4", "Path to base rootfs ext4 image")
 	flag.StringVar(&overlayDir, "overlay-dir", "", "Directory for ephemeral tmpfs/ext4 overlays")
 	flag.IntVar(&tapPoolSize, "tap-pool-size", 100, "Number of pre-warmed TAP network devices")
+	flag.IntVar(&warmPoolSize, "warm-pool-size", 10, "Number of pre-warmed Firecracker microVMs (0 for cold-boot mode)")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	flag.Parse()
 
@@ -47,10 +49,11 @@ func main() {
 
 	// Initialize Sandbox Manager (Hypervisor driver, TAP pool, Overlay storage)
 	cfg := sandbox.Config{
-		KernelPath: kernelPath,
-		RootfsPath: rootfsPath,
-		OverlayDir: overlayDir,
-		PoolSize:   tapPoolSize,
+		KernelPath:   kernelPath,
+		RootfsPath:   rootfsPath,
+		OverlayDir:   overlayDir,
+		PoolSize:     tapPoolSize,
+		WarmPoolSize: warmPoolSize,
 	}
 
 	mgr, err := sandbox.NewManager(cfg, log)
