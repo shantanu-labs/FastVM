@@ -26,6 +26,8 @@ type SandboxManager struct {
 	sandboxes       map[string]*activeEntry
 	recentInstances map[string]Instance
 	pinnedInstances map[string]Instance
+	jobs            map[string]*api.JobInfo
+	jobCancels      map[string]context.CancelFunc
 }
 
 type activeEntry struct {
@@ -77,6 +79,8 @@ func NewManager(cfg Config, logger *logrus.Logger) (*SandboxManager, error) {
 		sandboxes:       make(map[string]*activeEntry),
 		recentInstances: make(map[string]Instance),
 		pinnedInstances: make(map[string]Instance),
+		jobs:            make(map[string]*api.JobInfo),
+		jobCancels:      make(map[string]context.CancelFunc),
 	}, nil
 }
 
@@ -255,6 +259,140 @@ func (m *SandboxManager) Branch(ctx context.Context, parentID string, newID stri
 		MemoryPath:      memPath,
 		DurationMs:      dur,
 	}, nil
+}
+
+// StartJob launches an asynchronous background job inside a microVM and returns immediately (<1ms).
+func (m *SandboxManager) StartJob(req api.ExecuteRequest) (*api.JobInfo, error) {
+	jobID := "job-" + uuid.New().String()[:8]
+	sandboxID := req.SandboxID
+	if sandboxID == "" {
+		sandboxID = "sbx-" + uuid.New().String()[:8]
+	}
+
+	if req.TimeoutMs <= 0 {
+		req.TimeoutMs = 60000 // default 60s timeout for background agent jobs
+	}
+	req.SandboxID = sandboxID
+	req.Async = false
+
+	now := time.Now()
+	job := &api.JobInfo{
+		JobID:     jobID,
+		SandboxID: sandboxID,
+		Language:  req.Language,
+		Status:    "running",
+		CreatedAt: now,
+	}
+
+	jobCtx, cancel := context.WithCancel(context.Background())
+
+	m.mu.Lock()
+	m.jobs[jobID] = job
+	m.jobCancels[jobID] = cancel
+	m.mu.Unlock()
+
+	go func() {
+		defer cancel()
+		start := time.Now()
+		resp, err := m.Execute(jobCtx, req)
+		completedAt := time.Now()
+		dur := completedAt.Sub(start).Milliseconds()
+		if dur == 0 {
+			dur = 1
+		}
+
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.jobCancels, jobID)
+
+		if job.Status == "cancelled" {
+			job.CompletedAt = &completedAt
+			job.DurationMs = dur
+			return
+		}
+
+		job.CompletedAt = &completedAt
+		job.DurationMs = dur
+		if err != nil {
+			if jobCtx.Err() == context.Canceled {
+				job.Status = "cancelled"
+				return
+			}
+			job.Status = "failed"
+			job.Error = err.Error()
+			return
+		}
+
+		job.Stdout = resp.Stdout
+		job.Stderr = resp.Stderr
+		job.ExitCode = resp.ExitCode
+		job.IsTimeout = resp.IsTimeout
+		job.Error = resp.Error
+		if resp.DurationMs > 0 {
+			job.DurationMs = resp.DurationMs
+		}
+
+		switch {
+		case resp.IsTimeout:
+			job.Status = "timeout"
+		case resp.ExitCode != 0:
+			job.Status = "failed"
+		default:
+			job.Status = "completed"
+		}
+	}()
+
+	cp := *job
+	return &cp, nil
+}
+
+// GetJob retrieves a snapshot of a background job's status and output.
+func (m *SandboxManager) GetJob(jobID string) (*api.JobInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	job, ok := m.jobs[jobID]
+	if !ok {
+		return nil, fmt.Errorf("job %s not found", jobID)
+	}
+	cp := *job
+	return &cp, nil
+}
+
+// ListJobs returns all tracked background jobs.
+func (m *SandboxManager) ListJobs() []*api.JobInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]*api.JobInfo, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		cp := *j
+		out = append(out, &cp)
+	}
+	return out
+}
+
+// CancelJob terminates a running background job.
+func (m *SandboxManager) CancelJob(jobID string) (*api.JobInfo, error) {
+	m.mu.Lock()
+	job, ok := m.jobs[jobID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("job %s not found", jobID)
+	}
+	cancel, hasCancel := m.jobCancels[jobID]
+	if job.Status == "running" {
+		now := time.Now()
+		job.Status = "cancelled"
+		job.CompletedAt = &now
+	}
+	cp := *job
+	m.mu.Unlock()
+
+	if hasCancel && cancel != nil {
+		cancel()
+	}
+	return &cp, nil
 }
 
 // HypervisorName returns the name of the active hypervisor driver.

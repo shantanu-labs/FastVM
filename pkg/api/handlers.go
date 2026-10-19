@@ -14,6 +14,10 @@ import (
 // Manager interface decoupling the HTTP layer from SandboxManager.
 type Manager interface {
 	Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResponse, error)
+	StartJob(req ExecuteRequest) (*JobInfo, error)
+	GetJob(jobID string) (*JobInfo, error)
+	ListJobs() []*JobInfo
+	CancelJob(jobID string) (*JobInfo, error)
 	Branch(ctx context.Context, parentID string, newID string) (*BranchResponse, error)
 	HypervisorName() string
 	KvmAvailable() bool
@@ -47,6 +51,10 @@ func (s *Server) Routes() chi.Router {
 
 	r.Get("/healthz", s.HandleHealthz)
 	r.Post("/v1/execute", s.HandleExecute)
+	r.Post("/v1/jobs", s.HandleStartJob)
+	r.Get("/v1/jobs", s.HandleListJobs)
+	r.Get("/v1/jobs/{id}", s.HandleGetJob)
+	r.Delete("/v1/jobs/{id}", s.HandleCancelJob)
 	r.Get("/v1/sandboxes", s.HandleListSandboxes)
 	r.Post("/v1/sandboxes/{id}/branch", s.HandleBranchSandbox)
 	r.Post("/sandboxes/{id}/branch", s.HandleBranchSandbox)
@@ -69,7 +77,7 @@ func (s *Server) HandleHealthz(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// HandleExecute handles synchronous code execution inside a microVM sandbox.
+// HandleExecute handles synchronous or asynchronous code execution inside a microVM sandbox.
 func (s *Server) HandleExecute(w http.ResponseWriter, r *http.Request) {
 	var req ExecuteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -79,6 +87,25 @@ func (s *Server) HandleExecute(w http.ResponseWriter, r *http.Request) {
 
 	if req.Code == "" {
 		http.Error(w, `{"error":"code payload cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Async {
+		job, err := s.mgr.StartJob(req)
+		if err != nil {
+			s.logger.Errorf("Async execute error: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(&ExecuteResponse{
+			JobID:     job.JobID,
+			SandboxID: job.SandboxID,
+			Status:    job.Status,
+		})
 		return
 	}
 
@@ -93,6 +120,70 @@ func (s *Server) HandleExecute(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// HandleStartJob launches an asynchronous background job inside a microVM.
+func (s *Server) HandleStartJob(w http.ResponseWriter, r *http.Request) {
+	var req ExecuteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Code == "" {
+		http.Error(w, `{"error":"code payload cannot be empty"}`, http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.mgr.StartJob(req)
+	if err != nil {
+		s.logger.Errorf("StartJob handler error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(job)
+}
+
+// HandleGetJob returns the current status and stdout/stderr of a background job.
+func (s *Server) HandleGetJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	job, err := s.mgr.GetJob(jobID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(job)
+}
+
+// HandleListJobs lists all tracked background jobs.
+func (s *Server) HandleListJobs(w http.ResponseWriter, r *http.Request) {
+	jobs := s.mgr.ListJobs()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(jobs)
+}
+
+// HandleCancelJob terminates a running background job.
+func (s *Server) HandleCancelJob(w http.ResponseWriter, r *http.Request) {
+	jobID := chi.URLParam(r, "id")
+	job, err := s.mgr.CancelJob(jobID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(job)
 }
 
 // HandleBranchSandbox snapshots and forks an existing sandbox into a parallel branch.

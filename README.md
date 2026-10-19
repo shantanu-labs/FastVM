@@ -182,6 +182,26 @@ curl -X POST http://localhost:8080/v1/execute \
   -d '{"sandbox_id": "sbx-branch-1", "language": "python", "code": "step += 1; plan.append(\"deploy\"); print(step, plan)"}'
 ```
 
+### 4. Asynchronous Background Jobs (`"async": true` / `/v1/jobs`)
+Agents like Claude Code and Codex can dispatch long-running builds, test suites, or background workers in `<1ms` without blocking their reasoning loop:
+```bash
+# 1. Dispatch a background job (returns HTTP 202 Accepted + job_id in <1ms)
+curl -X POST http://localhost:8080/v1/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "language": "python",
+    "code": "import time; time.sleep(2); print(\"test suite passed\")",
+    "async": true
+  }'
+# -> {"job_id": "job-4a9c18e2", "sandbox_id": "sbx-91f0d3a1", "status": "running", ...}
+
+# 2. Poll job status and output
+curl http://localhost:8080/v1/jobs/job-4a9c18e2
+
+# 3. Cancel a running background job if needed
+curl -X DELETE http://localhost:8080/v1/jobs/job-4a9c18e2
+```
+
 ---
 
 ## 🛡️ Security & Adversarial Verification

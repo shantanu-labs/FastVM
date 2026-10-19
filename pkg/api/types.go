@@ -10,17 +10,36 @@ type ExecuteRequest struct {
 	Stdin     string            `json:"stdin,omitempty"`      // optional stdin input
 	Env       map[string]string `json:"env,omitempty"`        // environment variables to pass
 	SandboxID string            `json:"sandbox_id,omitempty"` // optional existing sandbox ID or branch source
+	Async     bool              `json:"async,omitempty"`      // if true, runs in background and returns job_id immediately
 }
 
 // ExecuteResponse represents the result of code execution sent back to the agent.
 type ExecuteResponse struct {
+	JobID      string `json:"job_id,omitempty"`
 	SandboxID  string `json:"sandbox_id"`
+	Status     string `json:"status,omitempty"` // "running", "completed", "failed", "timeout", "cancelled"
 	Stdout     string `json:"stdout"`
 	Stderr     string `json:"stderr"`
 	ExitCode   int    `json:"exit_code"`
 	DurationMs int64  `json:"duration_ms"`
 	IsTimeout  bool   `json:"is_timeout"`
 	Error      string `json:"error,omitempty"`
+}
+
+// JobInfo tracks an asynchronous background execution job inside a microVM sandbox.
+type JobInfo struct {
+	JobID       string     `json:"job_id"`
+	SandboxID   string     `json:"sandbox_id"`
+	Language    string     `json:"language"`
+	Status      string     `json:"status"` // "running", "completed", "failed", "timeout", "cancelled"
+	Stdout      string     `json:"stdout"`
+	Stderr      string     `json:"stderr"`
+	ExitCode    int        `json:"exit_code"`
+	DurationMs  int64      `json:"duration_ms"`
+	IsTimeout   bool       `json:"is_timeout"`
+	Error       string     `json:"error,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // BranchRequest represents a request to snapshot and branch an existing sandbox microVM.
