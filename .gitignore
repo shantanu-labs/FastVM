@@ -1,0 +1,9 @@
+**/hidden/**
+hidden/
+bin/
+assets/
+.DS_Store
+*.sock
+*.ext4
+*.vmstate
+*.mem

@@ -1,0 +1,26 @@
+# Multi-stage image to build rootfs.ext4 containing python, bash, node, and agent-init
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download || true
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /bin/agent-init ./cmd/agent-init
+
+FROM alpine:3.19
+
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    bash \
+    nodejs \
+    npm \
+    iproute2 \
+    curl
+
+COPY --from=builder /bin/agent-init /sbin/agent-init
+RUN chmod +x /sbin/agent-init
+
+# Set agent-init as guest entrypoint
+ENTRYPOINT ["/sbin/agent-init"]

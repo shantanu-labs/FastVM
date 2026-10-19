@@ -1,0 +1,37 @@
+# Build stage
+FROM golang:1.24-bookworm AS builder
+
+WORKDIR /src
+COPY go.mod go.sum* ./
+RUN go mod download || true
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/airboxd ./cmd/airboxd && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/agent-init ./cmd/agent-init
+
+# Runtime stage
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iptables \
+    iproute2 \
+    e2fsprogs \
+    ca-certificates \
+    curl \
+    wget \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Firecracker v1.7.0 binary
+ARG FIRECRACKER_VERSION=v1.7.0
+RUN ARCH="$(uname -m)" && \
+    wget -qO- "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-${ARCH}.tgz" | tar -xz && \
+    mv "release-${FIRECRACKER_VERSION}-${ARCH}/firecracker-${FIRECRACKER_VERSION}-${ARCH}" /usr/local/bin/firecracker && \
+    chmod +x /usr/local/bin/firecracker && \
+    rm -rf "release-${FIRECRACKER_VERSION}-${ARCH}"
+
+COPY --from=builder /bin/airboxd /usr/local/bin/airboxd
+COPY --from=builder /bin/agent-init /usr/local/bin/agent-init
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/airboxd"]

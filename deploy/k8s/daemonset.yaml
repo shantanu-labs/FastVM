@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: airboxd
+  namespace: airbox-system
+  labels:
+    app: airboxd
+spec:
+  selector:
+    matchLabels:
+      app: airboxd
+  template:
+    metadata:
+      labels:
+        app: airboxd
+    spec:
+      hostNetwork: true
+      hostPID: true
+      containers:
+      - name: airboxd
+        image: ghcr.io/shantanuroy/airboxd:latest
+        imagePullPolicy: IfNotPresent
+        command: ["/usr/local/bin/airboxd"]
+        args:
+          - "--port=8080"
+          - "--kernel=/var/lib/airbox/assets/vmlinux"
+          - "--rootfs=/var/lib/airbox/assets/rootfs.ext4"
+          - "--overlay-dir=/var/lib/airbox/overlays"
+          - "--tap-pool-size=100"
+        ports:
+        - containerPort: 8080
+          name: http
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN", "SYS_ADMIN"]
+        resources:
+          requests:
+            cpu: "2"
+            memory: "4Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+        volumeMounts:
+        - name: kvm
+          mountPath: /dev/kvm
+        - name: tun
+          mountPath: /dev/net/tun
+        - name: airbox-data
+          mountPath: /var/lib/airbox
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+      volumes:
+      - name: kvm
+        hostPath:
+          path: /dev/kvm
+      - name: tun
+        hostPath:
+          path: /dev/net/tun
+      - name: airbox-data
+        hostPath:
+          path: /var/lib/airbox
+          type: DirectoryOrCreate
+      tolerations:
+      - operator: Exists
