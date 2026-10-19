@@ -319,7 +319,7 @@ func generateGanttChart(results []ActivityTiming, totalDuration time.Duration, o
 <head>
   <meta charset="UTF-8">
   <title>Airbox MicroVM Lifecycle Gantt Chart</title>
-  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .activity-tap { background-color: #3b82f6; }
     .activity-overlay { background-color: #8b5cf6; }

@@ -1,6 +1,12 @@
 # Airbox (FastVM) ⚡
 > **Sub-100ms Hardware-Isolated Firecracker MicroVM Sandbox for Autonomous Coding Agents**
 
+[![CI](https://github.com/shantanu-labs/FastVM/actions/workflows/ci.yml/badge.svg)](https://github.com/shantanu-labs/FastVM/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go)](go.mod)
+[![Hypervisor](https://img.shields.io/badge/Firecracker-v1.7.0-FF9900?logo=amazon-aws)](pkg/sandbox/firecracker_linux.go)
+[![SLA](https://img.shields.io/badge/P95%20Latency-18.50ms%20(%3C80ms%20SLA)-10B981)](docs/assets/benchmark_gantt.png)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Airbox is an ultra-low latency, KVM-isolated code execution engine engineered specifically for AI coding agents (Devin, OpenHands, AutoGen, LangGraph). It delivers the hardware security boundary of AWS Firecracker microVMs with millisecond execution latency and git-like state branching.
 
 ---
@@ -30,7 +36,7 @@ Airbox Pre-Warmed & Snapshot Flow (~11.9ms Median RTT):
 | **Max** | `23.85 ms` | `19.00 ms` | `< 80.0 ms` | ✅ PASS |
 | **Throughput** | **`788.98 req/s`** | `100% Success (100/100)` | `Wall Time: 126.75 ms` | ✅ PASS |
 
-📊 **Interactive Lifecycle Visualization:** Open [`benchmark_gantt.html`](benchmark_gantt.html) in a browser to inspect the per-request concurrency timeline across TAP lease, CoW overlay, VM boot/restore, `AF_VSOCK` handshake, in-guest execution, and teardown phases.
+![Airbox Firecracker Lifecycle Gantt Chart](docs/assets/benchmark_gantt.png)
 
 ---
 
@@ -50,7 +56,6 @@ Airbox Pre-Warmed & Snapshot Flow (~11.9ms Median RTT):
 FastVM/
 ├── go.mod                        # Go 1.24 module definition
 ├── Makefile                      # Build, Linux cross-compile, test, and benchmark targets
-├── benchmark_gantt.html          # Interactive 100-request Firecracker lifecycle Gantt chart
 ├── cmd/
 │   ├── airboxd/                  # Airbox HTTP control plane daemon
 │   │   └── main.go
@@ -99,6 +104,9 @@ FastVM/
 ### 1. Provision & Set Up a Linux KVM Host
 On a Linux machine or cloud VM with nested virtualization (`/dev/kvm`):
 ```bash
+git clone https://github.com/shantanu-labs/FastVM.git
+cd FastVM
+
 # Verify KVM, enable IPv4 forwarding, and install Firecracker v1.7.0
 ./scripts/setup-host.sh
 
@@ -175,3 +183,9 @@ kubectl create namespace airbox-system
 kubectl apply -f deploy/k8s/daemonset.yaml
 kubectl apply -f deploy/k8s/service.yaml
 ```
+
+---
+
+## 📄 License
+
+Released under the [MIT License](LICENSE).

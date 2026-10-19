@@ -1,9 +1,10 @@
 **/hidden/**
 hidden/
-bin/
-assets/
+/bin/
+/assets/
 .DS_Store
 *.sock
 *.ext4
 *.vmstate
 *.mem
+benchmark_gantt.html

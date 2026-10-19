@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    name: Build & Security Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.24
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Cross-compile Linux Daemons (airboxd & agent-init)
+        run: |
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/airboxd-linux-amd64 ./cmd/airboxd
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/agent-init-linux-amd64 ./cmd/agent-init
+
+      - name: Run Unit & Adversarial Security Tests
+        run: go test -v -race ./tests/unit/... ./tests/adversarial/...
