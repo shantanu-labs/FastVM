@@ -8,3 +8,4 @@ hidden/
 *.vmstate
 *.mem
 benchmark_gantt.html
+~$*
