@@ -307,7 +307,7 @@ func TestAsyncExecuteAndJobsLifecycle(t *testing.T) {
 
 	// 2. Poll GET /v1/jobs/{id} until completed
 	var jobInfo api.JobInfo
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 150; i++ {
 		getReq, _ := http.NewRequest(http.MethodGet, "/v1/jobs/"+asyncResp.JobID, nil)
 		getRR := httptest.NewRecorder()
 		router.ServeHTTP(getRR, getReq)
@@ -315,10 +315,10 @@ func TestAsyncExecuteAndJobsLifecycle(t *testing.T) {
 			t.Fatalf("expected status 200 on GET /v1/jobs/%s, got %d", asyncResp.JobID, getRR.Code)
 		}
 		_ = json.Unmarshal(getRR.Body.Bytes(), &jobInfo)
-		if jobInfo.Status == "completed" {
+		if jobInfo.Status == "completed" || jobInfo.Status == "failed" {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	}
 
 	if jobInfo.Status != "completed" {

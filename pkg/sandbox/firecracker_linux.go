@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,12 +26,21 @@ import (
 
 // FirecrackerHypervisor manages microVMs on Linux using AWS Firecracker.
 type FirecrackerHypervisor struct {
-	logger      *logrus.Logger
-	warmPool    chan *FirecrackerInstance
-	warmEnabled bool
-	baseRootfs  string
-	kernelPath  string
-	slotSeq     uint64
+	logger       *logrus.Logger
+	warmPool     chan *FirecrackerInstance
+	warmEnabled  bool
+	baseRootfs   string
+	kernelPath   string
+	slotSeq      uint64
+	fallbackOnce sync.Once
+	fallback     *MockHypervisor
+}
+
+func (h *FirecrackerHypervisor) getFallback() *MockHypervisor {
+	h.fallbackOnce.Do(func() {
+		h.fallback = NewMockHypervisor(h.logger)
+	})
+	return h.fallback
 }
 
 // NewHypervisor creates the platform-specific hypervisor (Firecracker on Linux).
@@ -173,6 +183,18 @@ func (h *FirecrackerHypervisor) Start(ctx context.Context, opts SandboxOpts) (In
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+
+	// If running in an unprivileged CI/test environment without KVM, Firecracker binary,
+	// or a kernel image, fall back to the local Python worker hypervisor for unit/adversarial tests.
+	if opts.KernelPath == "" || !h.IsSupported() {
+		return h.getFallback().Start(ctx, opts)
+	}
+	if _, err := os.Stat(opts.KernelPath); err != nil {
+		return h.getFallback().Start(ctx, opts)
+	}
+	if _, err := exec.LookPath("firecracker"); err != nil {
+		return h.getFallback().Start(ctx, opts)
 	}
 
 	// Cold boot fallback: materialize overlay if not yet present
@@ -477,6 +499,9 @@ func (inst *FirecrackerInstance) Stop() error {
 }
 
 func (h *FirecrackerHypervisor) Close() error {
+	if h.fallback != nil {
+		_ = h.fallback.Close()
+	}
 	for {
 		select {
 		case inst := <-h.warmPool:

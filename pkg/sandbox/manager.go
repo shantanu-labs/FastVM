@@ -289,6 +289,7 @@ func (m *SandboxManager) StartJob(req api.ExecuteRequest) (*api.JobInfo, error) 
 	m.mu.Lock()
 	m.jobs[jobID] = job
 	m.jobCancels[jobID] = cancel
+	cp := *job
 	m.mu.Unlock()
 
 	go func() {
@@ -342,7 +343,6 @@ func (m *SandboxManager) StartJob(req api.ExecuteRequest) (*api.JobInfo, error) 
 		}
 	}()
 
-	cp := *job
 	return &cp, nil
 }
 
