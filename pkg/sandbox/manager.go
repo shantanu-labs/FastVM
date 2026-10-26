@@ -109,7 +109,17 @@ func (m *SandboxManager) Execute(ctx context.Context, req api.ExecuteRequest) (*
 		if hasPinned && pinnedInst != nil {
 			execCtx, execCancel := context.WithTimeout(ctx, timeout)
 			defer execCancel()
-			resp, err := pinnedInst.Execute(execCtx, req.Code, req.Stdin, req.Env)
+			var (
+				resp *api.ExecuteResponse
+				err  error
+			)
+			if langExec, ok := pinnedInst.(interface {
+				ExecuteLang(ctx context.Context, language, code, stdin string, env map[string]string) (*api.ExecuteResponse, error)
+			}); ok {
+				resp, err = langExec.ExecuteLang(execCtx, req.Language, req.Code, req.Stdin, req.Env)
+			} else {
+				resp, err = pinnedInst.Execute(execCtx, req.Code, req.Stdin, req.Env)
+			}
 			if err != nil {
 				if execCtx.Err() == context.DeadlineExceeded {
 					return &api.ExecuteResponse{
@@ -440,6 +450,40 @@ func (m *SandboxManager) ListSandboxes() []api.SandboxInfo {
 		})
 	}
 	return list
+}
+
+// DestroySandbox stops and releases an active or pinned sandbox by ID.
+func (m *SandboxManager) DestroySandbox(sandboxID string) error {
+	m.mu.Lock()
+	var inst Instance
+	var tap *network.TapDevice
+	if entry, ok := m.sandboxes[sandboxID]; ok {
+		inst = entry.instance
+		tap = entry.tap
+		delete(m.sandboxes, sandboxID)
+	}
+	if pinned, ok := m.pinnedInstances[sandboxID]; ok {
+		if inst == nil {
+			inst = pinned
+		}
+		delete(m.pinnedInstances, sandboxID)
+	}
+	if recent, ok := m.recentInstances[sandboxID]; ok {
+		if inst == nil {
+			inst = recent
+		}
+		delete(m.recentInstances, sandboxID)
+	}
+	m.mu.Unlock()
+
+	if inst == nil {
+		return fmt.Errorf("sandbox %s not found", sandboxID)
+	}
+	if tap != nil {
+		m.netPool.ReleaseTap(tap)
+	}
+	_ = m.overlayMgr.RemoveOverlay(sandboxID)
+	return inst.Stop()
 }
 
 // Close gracefully releases all resources.

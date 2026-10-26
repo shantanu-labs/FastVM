@@ -46,14 +46,21 @@ type pyWorker struct {
 var guestPyWorker = &pyWorker{}
 
 const pyLoopScript = `
-import sys, json, io, os, pickle, traceback, contextlib
+import sys, json, io, os, pickle, traceback, contextlib, marshal, types
 
 STATE_FILE = "/tmp/airbox_py_state.pkl"
 ns = {"__name__": "__main__"}
+def _hydrate_ns(raw_dict):
+    for rk, rv in raw_dict.items():
+        if isinstance(rv, tuple) and len(rv) == 4 and rv[0] == "__airbox_func__":
+            ns[rk] = types.FunctionType(marshal.loads(rv[1]), ns, rv[2], rv[3])
+        else:
+            ns[rk] = rv
+
 if os.path.exists(STATE_FILE):
     try:
         with open(STATE_FILE, "rb") as f:
-            ns.update(pickle.load(f))
+            _hydrate_ns(pickle.load(f))
     except Exception:
         pass
 
@@ -88,7 +95,7 @@ while True:
                     f.write(raw)
                 ns.clear()
                 ns["__name__"] = "__main__"
-                ns.update(pickle.loads(raw))
+                _hydrate_ns(pickle.loads(raw))
             except Exception as e:
                 sys.stdout.write(json.dumps({"stdout": "", "stderr": str(e), "exit_code": 1, "error": str(e)}) + "\n")
                 sys.stdout.flush()
@@ -106,6 +113,12 @@ while True:
             save_dict = {}
             for k, v in list(ns.items()):
                 if k.startswith("__"):
+                    continue
+                if isinstance(v, types.FunctionType):
+                    try:
+                        save_dict[k] = ("__airbox_func__", marshal.dumps(v.__code__), v.__name__, v.__defaults__)
+                    except Exception:
+                        pass
                     continue
                 try:
                     pickle.dumps(v)

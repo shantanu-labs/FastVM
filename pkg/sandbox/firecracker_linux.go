@@ -337,7 +337,14 @@ type GuestPayload struct {
 }
 
 func (inst *FirecrackerInstance) Execute(ctx context.Context, code string, stdin string, env map[string]string) (*api.ExecuteResponse, error) {
+	return inst.ExecuteLang(ctx, inst.opts.Language, code, stdin, env)
+}
+
+func (inst *FirecrackerInstance) ExecuteLang(ctx context.Context, language string, code string, stdin string, env map[string]string) (*api.ExecuteResponse, error) {
 	start := time.Now()
+	if language == "" {
+		language = inst.opts.Language
+	}
 
 	// Connect to Firecracker VSOCK unix domain socket and perform "CONNECT 5000\n" handshake
 	var conn net.Conn
@@ -385,16 +392,16 @@ func (inst *FirecrackerInstance) Execute(ctx context.Context, code string, stdin
 	defer conn.Close()
 
 	execStart := time.Now()
-	if inst.opts.Timeout > 0 {
-		_ = conn.SetDeadline(execStart.Add(inst.opts.Timeout))
-	} else if deadline, ok := ctx.Deadline(); ok {
+	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
+	} else if inst.opts.Timeout > 0 {
+		_ = conn.SetDeadline(execStart.Add(inst.opts.Timeout))
 	} else {
 		_ = conn.SetDeadline(execStart.Add(10 * time.Second))
 	}
 
 	payload := GuestPayload{
-		Language: inst.opts.Language,
+		Language: language,
 		Code:     code,
 		Stdin:    stdin,
 		Env:      env,

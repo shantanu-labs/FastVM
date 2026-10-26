@@ -202,6 +202,13 @@ curl http://localhost:8080/v1/jobs/job-4a9c18e2
 curl -X DELETE http://localhost:8080/v1/jobs/job-4a9c18e2
 ```
 
+### 5. OpenHands Integration & MCTS Speculative Branching (`integrations/openhands`)
+Drop-in [`FastVMRuntime`](integrations/openhands/fastvm_runtime.py) adapter for [OpenHands](https://github.com/All-Hands-AI/OpenHands) supporting `CmdRunAction`, `IPythonRunCellAction`, `FileReadAction`, `FileWriteAction`, and `runtime.branch()` for parallel Tree-of-Thoughts / MCTS rollouts:
+```bash
+python3 integrations/openhands/examples/mcts_branching_demo.py --url http://localhost:8080
+```
+See [`integrations/openhands/README.md`](integrations/openhands/README.md) for full integration instructions.
+
 ---
 
 ## 🛡️ Security & Adversarial Verification

@@ -19,7 +19,7 @@ import (
 
 // pythonWorkerScript is the in-memory Zygote server pre-loading common modules.
 const pythonWorkerScript = `
-import sys, json, io, traceback, time, os
+import sys, json, io, traceback, time, os, pickle, base64, marshal, types
 
 # Pre-load standard libraries to eliminate import latency
 import math, re, datetime
@@ -28,6 +28,7 @@ def handle(req):
     code = req.get("code", "")
     env = req.get("env", {})
     stdin_data = req.get("stdin", "")
+    state_b64 = req.get("state_b64", "")
 
     for k, v in env.items():
         os.environ[k] = str(v)
@@ -52,9 +53,41 @@ def handle(req):
         "time": time,
     }
 
+    if state_b64:
+        try:
+            restored = pickle.loads(base64.b64decode(state_b64))
+            if isinstance(restored, dict):
+                for rk, rv in restored.items():
+                    if isinstance(rv, tuple) and len(rv) == 4 and rv[0] == "__airbox_func__":
+                        glob[rk] = types.FunctionType(marshal.loads(rv[1]), glob, rv[2], rv[3])
+                    else:
+                        glob[rk] = rv
+        except Exception:
+            pass
+
+    new_state_b64 = state_b64
     try:
         compiled = compile(code, "<sandbox>", "exec")
         exec(compiled, glob)
+        save_dict = {}
+        for k, v in list(glob.items()):
+            if k.startswith("__") or k in ("math", "os", "sys", "time", "re", "datetime"):
+                continue
+            if isinstance(v, types.FunctionType):
+                try:
+                    save_dict[k] = ("__airbox_func__", marshal.dumps(v.__code__), v.__name__, v.__defaults__)
+                except Exception:
+                    pass
+                continue
+            try:
+                pickle.dumps(v)
+                save_dict[k] = v
+            except Exception:
+                pass
+        try:
+            new_state_b64 = base64.b64encode(pickle.dumps(save_dict)).decode("ascii")
+        except Exception:
+            pass
     except SystemExit as e:
         exit_code = e.code if isinstance(e.code, int) else 0
     except Exception as e:
@@ -72,7 +105,8 @@ def handle(req):
         "stderr": stderr_buf.getvalue(),
         "exit_code": exit_code,
         "duration_ms": max(1, int(dur_ms)),
-        "error": err_str
+        "error": err_str,
+        "state_b64": new_state_b64
     }
 
 for line in sys.stdin:
@@ -224,10 +258,12 @@ func (h *MockHypervisor) Close() error {
 }
 
 type MockInstance struct {
-	id     string
-	opts   SandboxOpts
-	logger *logrus.Entry
-	hyp    *MockHypervisor
+	id       string
+	opts     SandboxOpts
+	logger   *logrus.Entry
+	hyp      *MockHypervisor
+	stateMu  sync.Mutex
+	stateB64 string
 }
 
 func (h *MockHypervisor) Start(ctx context.Context, opts SandboxOpts) (Instance, error) {
@@ -245,9 +281,10 @@ func (m *MockInstance) ID() string {
 }
 
 type pyReq struct {
-	Code  string            `json:"code"`
-	Stdin string            `json:"stdin,omitempty"`
-	Env   map[string]string `json:"env,omitempty"`
+	Code     string            `json:"code"`
+	Stdin    string            `json:"stdin,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
+	StateB64 string            `json:"state_b64,omitempty"`
 }
 
 type pyResp struct {
@@ -256,17 +293,29 @@ type pyResp struct {
 	ExitCode   int    `json:"exit_code"`
 	DurationMs int64  `json:"duration_ms"`
 	Error      string `json:"error,omitempty"`
+	StateB64   string `json:"state_b64,omitempty"`
 }
 
 func (m *MockInstance) Execute(ctx context.Context, code string, stdin string, env map[string]string) (*api.ExecuteResponse, error) {
+	return m.ExecuteLang(ctx, m.opts.Language, code, stdin, env)
+}
+
+func (m *MockInstance) ExecuteLang(ctx context.Context, language string, code string, stdin string, env map[string]string) (*api.ExecuteResponse, error) {
 	start := time.Now()
-	lang := strings.ToLower(m.opts.Language)
+	lang := strings.ToLower(language)
+	if lang == "" {
+		lang = strings.ToLower(m.opts.Language)
+	}
 	if lang == "" {
 		lang = "python"
 	}
 
 	// 1. Fast-Path: Use Pre-Warmed Zygote Worker Pool for Python
 	if lang == "python" || lang == "python3" {
+		m.stateMu.Lock()
+		currentState := m.stateB64
+		m.stateMu.Unlock()
+
 		worker := m.hyp.acquireWorker()
 		if worker != nil {
 			type execResult struct {
@@ -279,7 +328,7 @@ func (m *MockInstance) Execute(ctx context.Context, code string, stdin string, e
 				worker.mu.Lock()
 				defer worker.mu.Unlock()
 
-				reqBytes, err := json.Marshal(pyReq{Code: code, Stdin: stdin, Env: env})
+				reqBytes, err := json.Marshal(pyReq{Code: code, Stdin: stdin, Env: env, StateB64: currentState})
 				if err != nil {
 					resCh <- execResult{err: err}
 					return
@@ -324,6 +373,11 @@ func (m *MockInstance) Execute(ctx context.Context, code string, stdin string, e
 			case r := <-resCh:
 				if r.err == nil {
 					m.hyp.releaseWorker(worker, true)
+					if r.resp.StateB64 != "" {
+						m.stateMu.Lock()
+						m.stateB64 = r.resp.StateB64
+						m.stateMu.Unlock()
+					}
 					return &api.ExecuteResponse{
 						SandboxID:  m.id,
 						Stdout:     r.resp.Stdout,
@@ -401,13 +455,18 @@ func (m *MockInstance) Execute(ctx context.Context, code string, stdin string, e
 
 func (m *MockInstance) Branch(ctx context.Context, newID string) (Instance, error) {
 	m.logger.Infof("[Mock] Branched sandbox %s -> %s", m.id, newID)
+	m.stateMu.Lock()
+	clonedState := m.stateB64
+	m.stateMu.Unlock()
+
 	newOpts := m.opts
 	newOpts.SandboxID = newID
 	return &MockInstance{
-		id:     newID,
-		opts:   newOpts,
-		logger: m.logger.WithField("sandbox_id", newID),
-		hyp:    m.hyp,
+		id:       newID,
+		opts:     newOpts,
+		logger:   m.logger.WithField("sandbox_id", newID),
+		hyp:      m.hyp,
+		stateB64: clonedState,
 	}, nil
 }
 

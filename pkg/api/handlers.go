@@ -58,6 +58,8 @@ func (s *Server) Routes() chi.Router {
 	r.Get("/v1/sandboxes", s.HandleListSandboxes)
 	r.Post("/v1/sandboxes/{id}/branch", s.HandleBranchSandbox)
 	r.Post("/sandboxes/{id}/branch", s.HandleBranchSandbox)
+	r.Delete("/v1/sandboxes/{id}", s.HandleDestroySandbox)
+	r.Delete("/sandboxes/{id}", s.HandleDestroySandbox)
 
 	return r
 }
@@ -219,4 +221,28 @@ func (s *Server) HandleListSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(sandboxes)
+}
+
+// HandleDestroySandbox stops and releases a pinned or active sandbox instance.
+func (s *Server) HandleDestroySandbox(w http.ResponseWriter, r *http.Request) {
+	sandboxID := chi.URLParam(r, "id")
+	if sandboxID == "" {
+		http.Error(w, `{"error":"sandbox id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if destroyer, ok := s.mgr.(interface{ DestroySandbox(id string) error }); ok {
+		if err := destroyer.DestroySandbox(sandboxID); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"sandbox_id": sandboxID,
+		"status":     "terminated",
+	})
 }

@@ -9,3 +9,6 @@ hidden/
 *.mem
 benchmark_gantt.html
 ~$*
+__pycache__/
+*.pyc
+
