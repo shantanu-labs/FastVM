@@ -26,3 +26,9 @@ Welcome to the technical documentation for **FastVM (Airbox)**—a sub-100ms, ha
    - Zero-CLI Linux Netlink TAP device pool (`tap0`..`tap99`) and `/30` subnet IPAM.
    - Host `iptables` firewall, NAT masquerading, and strict SSRF / Cloud Metadata (`169.254.169.254/32`) lockdown.
    - Multi-layer defense-in-depth: KVM hardware virtualization, OOM-killer protection (`oom_score_adj`), and fork-bomb containment (`threads-max` & `ulimit`).
+
+5. **[OpenHands Runtime Integration & MCTS Branching Specification](./openhands-integration.md)**
+   - Action-to-endpoint mapping (`CmdRunAction`, `IPythonRunCellAction`, `FileReadAction`, `FileWriteAction`).
+   - Multi-language stateful session pinning and function/variable state serialization.
+   - Speculative state branching (`runtime.branch()`) for parallel Tree-of-Thoughts / MCTS rollouts.
+   - Sandbox lifecycle teardown contract (`DELETE /v1/sandboxes/{id}`).
